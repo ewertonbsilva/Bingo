@@ -33,11 +33,12 @@ export const PrintManager: React.FC = () => {
 
   const getPrintStyles = () => {
     const isLandscape = cardsPerPage === 2 || cardsPerPage === 4;
+    const pageMargin = 5;
 
     return `
       @page {
         size: ${isLandscape ? "A4 landscape" : "A4 portrait"};
-        margin: 0;
+        margin: ${pageMargin}mm;
       }
 
       .bingo-card-print {
@@ -56,7 +57,8 @@ export const PrintManager: React.FC = () => {
         width: 100% !important;
         height: 100% !important;
         display: grid !important;
-        align-content: stretch !important;
+        align-content: center !important;
+        justify-content: center !important;
         justify-items: center !important;
         align-items: stretch !important;
         place-items: stretch center !important;
@@ -134,46 +136,62 @@ export const PrintManager: React.FC = () => {
           border: none !important;
           display: flex !important;
           flex-direction: column !important;
-          justify-content: flex-start !important;
+          justify-content: center !important;
           align-items: center !important;
           box-sizing: border-box !important;
           background: white !important;
         }
 
         .printable-page-break-portrait {
-          width: 210mm !important;
-          height: 297mm !important;
-          padding: 3mm !important;
+          width: 200mm !important;
+          height: 287mm !important;
+          padding: 1.5mm !important;
         }
 
         .printable-page-break-landscape {
-          width: 297mm !important;
-          height: 210mm !important;
-          padding: 3mm !important;
+          width: 287mm !important;
+          height: 200mm !important;
+          padding: 1.5mm !important;
         }
 
         .bingo-card-print-1 {
-          width: 204mm !important;
-          height: 286mm !important;
+          width: 196mm !important;
+          height: 281mm !important;
           padding: 3.2mm !important;
         }
 
         .bingo-card-print-2 {
-          width: 144mm !important;
-          height: 202mm !important;
+          width: 139mm !important;
+          height: 192mm !important;
           padding: 2.6mm !important;
         }
 
         .bingo-card-print-4 {
-          width: 144mm !important;
-          height: 99mm !important;
+          width: 139mm !important;
+          height: 94mm !important;
           padding: 1.8mm !important;
         }
 
         .bingo-card-print-6 {
-          width: 99mm !important;
-          height: 94mm !important;
+          width: 96mm !important;
+          height: 89mm !important;
           padding: 1.5mm !important;
+        }
+
+        .bingo-page-grid-1 {
+          gap: 0 !important;
+        }
+
+        .bingo-page-grid-2 {
+          gap: 1mm !important;
+        }
+
+        .bingo-page-grid-4 {
+          gap: 0.8mm !important;
+        }
+
+        .bingo-page-grid-6 {
+          gap: 0.7mm !important;
         }
       }
     `;
@@ -294,7 +312,7 @@ export const PrintManager: React.FC = () => {
                 </div>
 
                 <div
-                  className={`bingo-page-grid gap-0.5 md:gap-1 mx-auto my-0 ${
+                  className={`bingo-page-grid bingo-page-grid-${cardsPerPage} gap-0 mx-auto my-0 ${
                     cardsPerPage === 1
                       ? "grid-cols-1"
                       : cardsPerPage === 2
