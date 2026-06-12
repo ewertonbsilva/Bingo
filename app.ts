@@ -1,7 +1,7 @@
 import express from "express";
 import crypto from "node:crypto";
 import { GoogleGenAI, Type } from "@google/genai";
-import "./env";
+import "./env.ts";
 import {
   addWord,
   authenticateUser,
@@ -30,7 +30,7 @@ import {
   updateTheme,
   updateUser,
   updateWord,
-} from "./db";
+} from "./db.ts";
 
 function normalizeGeneratedWord(value: string) {
   const sanitized = value

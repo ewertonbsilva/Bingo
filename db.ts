@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import "./env";
+import "./env.ts";
 import { Pool } from "pg";
-import { INITIAL_WORDS } from "./src/data/initialWords";
+import { INITIAL_WORDS } from "./src/data/initialWords.ts";
 
 export type BingoType = "3x3" | "5x5";
 export type VictoryMode = "horizontal" | "vertical" | "diagonal" | "diagonal_inverse" | "full_card";

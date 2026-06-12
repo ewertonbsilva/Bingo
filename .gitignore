@@ -9,4 +9,6 @@ data/*.sqlite
 !.env.example
 
 .vercel
+api/app.cjs
+api/generated.js
 .env*

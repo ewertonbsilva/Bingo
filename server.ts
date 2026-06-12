@@ -1,8 +1,8 @@
 import express from "express";
-import "./env";
+import "./env.ts";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { createApp } from "./app";
+import { createApp } from "./app.ts";
 
 async function startServer() {
   const app = createApp();
