@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  
+  --color-burgundy: #5c0f22;
+  --color-burgundy-900: #3a0010;
+  --color-burgundy-950: #200007;
+}
+
+/* Custom Scrollbar Styles for premium lists scrolling */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(244, 63, 94, 0.2);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(244, 63, 94, 0.4);
+}
+
+/* Base style resets */
+body {
+  font-family: var(--font-sans);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+}
+
+.light .text-white,
+.light .text-black,
+.light button,
+.light label,
+.light span,
+.light .text-rose-100,
+.light .text-rose-200,
+.light .text-rose-300,
+.light .text-stone-100,
+.light .text-stone-200,
+.light .text-stone-300 {
+  color: #4a1d1f !important;
+}
+
+.light .text-rose-200\/50,
+.light .text-rose-200\/60,
+.light .text-rose-200\/70,
+.light .text-rose-300\/30,
+.light .text-rose-300\/40,
+.light .text-rose-300\/50,
+.light .text-rose-300\/60,
+.light .text-rose-100\/60,
+.light .text-rose-100\/70,
+.light .text-amber-900\/40,
+.light .text-amber-900\/50,
+.light .text-amber-900\/60,
+.light .text-black\/30,
+.light .text-black\/40 {
+  color: rgba(74, 29, 31, 0.72) !important;
+}
+
+.light .text-yellow-300,
+.light .text-yellow-400,
+.light .text-yellow-500,
+.light .text-amber-300,
+.light .text-amber-400,
+.light .text-amber-500,
+.light .text-red-400,
+.light .text-red-500,
+.light .text-emerald-300,
+.light .text-emerald-400,
+.light .text-blue-400 {
+  color: #8a4b0f !important;
+}
+
+.light .bg-white\/5,
+.light .bg-white\/10,
+.light .bg-white\/80,
+.light .bg-black\/30,
+.light .bg-black\/35,
+.light .bg-black\/40,
+.light .bg-black\/50,
+.light .bg-black\/10,
+.light .bg-rose-950\/40,
+.light .bg-rose-950\/50,
+.light .bg-rose-900,
+.light .bg-rose-900\/60,
+.light .bg-burgundy\/80,
+.light .from-rose-950,
+.light .via-burgundy,
+.light .to-rose-950,
+.light .from-burgundy-950,
+.light .via-\[\#3a0210\],
+.light .to-black,
+.light .from-red-950,
+.light .to-burgundy-900\/40,
+.light .from-rose-950\/40,
+.light .to-burgundy-900\/35,
+.light .from-rose-950\/35 {
+  background-color: rgba(255, 255, 255, 0.72) !important;
+  background-image: none !important;
+}
+
+.light .shadow-xl,
+.light .shadow-lg,
+.light .shadow-md,
+.light .shadow-2xl {
+  box-shadow: 0 14px 32px rgba(120, 53, 15, 0.08) !important;
+}
+
+.light .rounded-xl button,
+.light button.bg-gradient-to-r {
+  color: #4a1d1f !important;
+}
+
+.light .border-white\/5,
+.light .border-white\/10,
+.light .border-rose-500\/20,
+.light .border-rose-500\/30,
+.light .border-yellow-500\/20,
+.light .border-yellow-500\/30 {
+  border-color: rgba(120, 53, 15, 0.12) !important;
+}
+
+.light input,
+.light textarea,
+.light select {
+  color: #4a1d1f !important;
+  background-color: rgba(255, 255, 255, 0.92) !important;
+  border-color: rgba(120, 53, 15, 0.16) !important;
+}
+
+.light input::placeholder,
+.light textarea::placeholder {
+  color: rgba(74, 29, 31, 0.48) !important;
+}
+
+.light .opacity-60 {
+  opacity: 0.82 !important;
+}
+
+.light .opacity-40 {
+  opacity: 0.72 !important;
+}

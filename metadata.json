@@ -1,0 +1,6 @@
+{
+  "name": "Bingo da Rede de Casais",
+  "description": "Sistema completo para bingo de encontros e eventos de casais com sorteador animado, temas românticos e geração de palavras por IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
