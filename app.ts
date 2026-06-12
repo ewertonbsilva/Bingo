@@ -48,6 +48,16 @@ function normalizeGeneratedWord(value: string) {
     .slice(0, 16);
 }
 
+const fallbackOptions = [
+  "Adoracao", "Alianca", "Amizade", "Bondade", "Caridade",
+  "Devocao", "Esperanca", "Fidelidade", "Honra", "Mutuo",
+  "Sinceridade", "Ternura", "Sabedoria", "Conselho", "Oracao",
+];
+
+function buildFallbackWords(existingWords: string[]) {
+  return fallbackOptions.filter((word) => !existingWords.includes(word)).slice(0, 5);
+}
+
 export function createApp() {
   const app = express();
   app.use(express.json());
@@ -361,13 +371,7 @@ export function createApp() {
       const { existingWords = [], themeName = "" } = req.body;
 
       if (!ai) {
-        const fallbackOptions = [
-          "Adoracao", "Alianca", "Amizade", "Bondade", "Caridade",
-          "Devocao", "Esperanca", "Fidelidade", "Honra", "Mutuo",
-          "Sinceridade", "Ternura", "Sabedoria", "Conselho", "Oracao",
-        ];
-        const newWords = fallbackOptions.filter((w) => !existingWords.includes(w)).slice(0, 5);
-        return res.json({ words: newWords });
+        return res.json({ words: buildFallbackWords(existingWords) });
       }
 
       const prompt = `Gere uma lista de 8 novas palavras em portugues para um bingo tematico.
@@ -388,33 +392,37 @@ Regras:
 9. Se estiver em duvida sobre uma palavra, descarte e escolha outra mais simples e correta.
 10. Retorne um array JSON com as palavras.`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          temperature: 0.35,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              words: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: prompt,
+          config: {
+            temperature: 0.35,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                words: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
               },
+              required: ["words"],
             },
-            required: ["words"],
           },
-        },
-      });
+        });
 
-      const result = JSON.parse(response.text || "{}");
-      const generatedWords = (result.words || [])
-        .map((w: string) => normalizeGeneratedWord(w))
-        .filter((w: string) => w.length > 2 && w.length <= 16 && !existingWords.includes(w) && !/^(X|Y|Z)+$/.test(w));
+        const result = JSON.parse(response.text || "{}");
+        const generatedWords = (result.words || [])
+          .map((w: string) => normalizeGeneratedWord(w))
+          .filter((w: string) => w.length > 2 && w.length <= 16 && !existingWords.includes(w) && !/^(X|Y|Z)+$/.test(w));
 
-      res.json({ words: generatedWords });
+        res.json({ words: generatedWords.length > 0 ? generatedWords : buildFallbackWords(existingWords) });
+      } catch (error: any) {
+        console.error("Gemini Generation Error:", error);
+        res.json({ words: buildFallbackWords(existingWords) });
+      }
     } catch (error: any) {
-      console.error("Gemini Generation Error:", error);
       res.status(500).json({ error: "Erro ao gerar palavras usando IA." });
     }
   });
