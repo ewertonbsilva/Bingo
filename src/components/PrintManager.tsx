@@ -121,9 +121,9 @@ export const PrintManager: React.FC = () => {
 
         #print-rendering-area {
           display: block !important;
-          position: absolute !important;
-          left: 0 !important;
-          top: 0 !important;
+          position: static !important;
+          left: auto !important;
+          top: auto !important;
           width: 100% !important;
           padding: 0 !important;
           margin: 0 !important;
@@ -163,20 +163,20 @@ export const PrintManager: React.FC = () => {
         }
 
         .bingo-card-print-2 {
-          width: 139mm !important;
-          height: 192mm !important;
+          width: 141mm !important;
+          height: 196mm !important;
           padding: 2.6mm !important;
         }
 
         .bingo-card-print-4 {
-          width: 139mm !important;
-          height: 94mm !important;
+          width: 140.5mm !important;
+          height: 97mm !important;
           padding: 1.8mm !important;
         }
 
         .bingo-card-print-6 {
-          width: 96mm !important;
-          height: 89mm !important;
+          width: 99.5mm !important;
+          height: 95mm !important;
           padding: 1.5mm !important;
         }
 
@@ -187,19 +187,19 @@ export const PrintManager: React.FC = () => {
 
         .bingo-page-grid-2 {
           gap: 0.6mm !important;
-          grid-template-columns: repeat(2, 139mm) !important;
+          grid-template-columns: repeat(2, 141mm) !important;
         }
 
         .bingo-page-grid-4 {
           gap: 0.6mm !important;
-          grid-template-columns: repeat(2, 139mm) !important;
-          grid-template-rows: repeat(2, 94mm) !important;
+          grid-template-columns: repeat(2, 140.5mm) !important;
+          grid-template-rows: repeat(2, 97mm) !important;
         }
 
         .bingo-page-grid-6 {
           gap: 0.5mm !important;
-          grid-template-columns: repeat(2, 96mm) !important;
-          grid-template-rows: repeat(3, 89mm) !important;
+          grid-template-columns: repeat(2, 99.5mm) !important;
+          grid-template-rows: repeat(3, 95mm) !important;
         }
       }
     `;
