@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "motion/react";
 export const Sorteador: React.FC<{ onLaunchPublicScreen: () => void }> = ({ onLaunchPublicScreen }) => {
   const { currentRound, drawWord, wordBank, blocks, updateBlockRange } = useBingo();
   const [isRaffling, setIsRaffling] = useState(false);
+  const [isRevealingResult, setIsRevealingResult] = useState(false);
   const [raffleDisplay, setRaffleDisplay] = useState("SORTEAR");
   const [showRaffleAlert, setShowRaffleAlert] = useState("");
   const [rangeStart, setRangeStart] = useState<number>(1);
@@ -40,10 +41,11 @@ export const Sorteador: React.FC<{ onLaunchPublicScreen: () => void }> = ({ onLa
     }
 
     setIsRaffling(true);
+    setIsRevealingResult(false);
     setShowRaffleAlert("");
 
     let counter = 0;
-    const maxCycles = 15;
+    const maxCycles = 10;
     const interval = setInterval(async () => {
       const tempWord = unDrawn[Math.floor(Math.random() * unDrawn.length)];
       setRaffleDisplay(tempWord);
@@ -51,13 +53,16 @@ export const Sorteador: React.FC<{ onLaunchPublicScreen: () => void }> = ({ onLa
 
       if (counter >= maxCycles) {
         clearInterval(interval);
+        setIsRevealingResult(true);
+        setRaffleDisplay("...");
         const selected = await drawWord();
         if (selected) {
           setRaffleDisplay(selected);
         }
+        setIsRevealingResult(false);
         setIsRaffling(false);
       }
-    }, 100);
+    }, 70);
   };
 
   useEffect(() => {
@@ -97,6 +102,17 @@ export const Sorteador: React.FC<{ onLaunchPublicScreen: () => void }> = ({ onLa
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-gradient-to-br from-rose-950/35 to-burgundy-900/35 backdrop-blur-md rounded-3xl p-8 border border-white/10 shadow-xl flex flex-col items-center justify-center text-center relative overflow-hidden h-[340px]">
+          <motion.div
+            aria-hidden="true"
+            className="absolute inset-0 pointer-events-none"
+            animate={isRaffling ? { opacity: [0.2, 0.45, 0.2] } : { opacity: 0.16 }}
+            transition={isRaffling ? { duration: 0.8, repeat: Infinity, ease: "easeInOut" } : { duration: 0.4 }}
+          >
+            <div className="absolute left-1/2 top-1/2 h-[260px] w-[260px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-yellow-400/10 blur-3xl" />
+            <div className="absolute left-1/2 top-1/2 h-[180px] w-[180px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-yellow-300/20" />
+            <div className="absolute left-1/2 top-1/2 h-[230px] w-[230px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-rose-200/10" />
+          </motion.div>
+
           <div className="relative z-10 space-y-6 w-full max-w-md">
             <div className="text-xs text-yellow-400 font-mono tracking-widest uppercase font-bold">SORTEIO DO BLOCO {currentRound?.blockId ?? "-"}</div>
 
@@ -104,18 +120,60 @@ export const Sorteador: React.FC<{ onLaunchPublicScreen: () => void }> = ({ onLa
               <AnimatePresence mode="wait">
                 <motion.div
                   key={raffleDisplay}
-                  initial={{ scale: 0.8, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1, y: [0, -10, 0] }}
-                  exit={{ scale: 0.8, opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className={`text-4xl sm:text-5xl md:text-6xl font-black tracking-wider font-sans text-transparent bg-clip-text bg-gradient-to-r ${
-                    isRaffling ? "from-yellow-400 via-amber-300 to-yellow-500" : "from-white via-rose-100 to-yellow-300"
-                  } drop-shadow-md p-1`}
+                  initial={{ scale: 0.92, opacity: 0.35, y: 10, filter: "blur(4px)" }}
+                  animate={{
+                    scale: isRaffling && !isRevealingResult ? [0.99, 1.03, 1] : [0.94, 1.1, 1],
+                    opacity: 1,
+                    y: isRaffling && !isRevealingResult ? [8, -2, 0] : [10, -14, 0],
+                    filter: isRevealingResult ? ["blur(0px)", "blur(0px)", "blur(0px)"] : ["blur(3px)", "blur(0px)", "blur(0px)"],
+                  }}
+                  exit={{ scale: 1.01, opacity: 0.15, y: -6, filter: "blur(3px)" }}
+                  transition={{ duration: isRaffling && !isRevealingResult ? 0.08 : 0.42, ease: isRaffling && !isRevealingResult ? "linear" : "easeOut" }}
+                  className="relative p-1"
                 >
-                  {raffleDisplay}
+                  <motion.div
+                    className={`absolute inset-0 rounded-3xl ${
+                      isRaffling ? "bg-yellow-300/12" : "bg-white/8"
+                    }`}
+                    animate={isRaffling && !isRevealingResult ? { scale: [0.98, 1.02, 0.99], opacity: [0.18, 0.28, 0.18] } : { scale: 1, opacity: 0.2 }}
+                    transition={isRaffling && !isRevealingResult ? { duration: 0.22, repeat: Infinity, ease: "linear" } : { duration: 0.3 }}
+                  />
+                  <div
+                    className={`relative text-4xl sm:text-5xl md:text-6xl font-black tracking-[0.06em] font-sans text-transparent bg-clip-text bg-gradient-to-r ${
+                      isRaffling && !isRevealingResult ? "from-yellow-300 via-amber-100 to-yellow-500" : "from-white via-rose-50 to-yellow-200"
+                    } drop-shadow-md px-5 py-3`}
+                  >
+                    {raffleDisplay}
+                  </div>
                 </motion.div>
               </AnimatePresence>
             </div>
+
+            <AnimatePresence>
+              {isRaffling && !isRevealingResult && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="text-[10px] uppercase tracking-[0.35em] text-yellow-300/80 font-black"
+                >
+                  Misturando Palavras
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {isRevealingResult && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="text-[10px] uppercase tracking-[0.35em] text-rose-100/80 font-black"
+                >
+                  Revelando Palavra
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <button
               id="draw-word-action-btn"
