@@ -1,7 +1,7 @@
 import express from "express";
 import crypto from "node:crypto";
 import { GoogleGenAI, Type } from "@google/genai";
-import dotenv from "dotenv";
+import "./env";
 import {
   addWord,
   authenticateUser,
@@ -31,8 +31,6 @@ import {
   updateUser,
   updateWord,
 } from "./db";
-
-dotenv.config();
 
 function normalizeGeneratedWord(value: string) {
   const sanitized = value
@@ -70,7 +68,7 @@ export function createApp() {
       ?.slice(name.length + 1);
   };
 
-  const getAuthenticatedUser = (req: express.Request) => {
+  const getAuthenticatedUser = async (req: express.Request) => {
     const raw = readCookie(req.headers.cookie, "bingo_auth");
     if (!raw) return null;
     const [userIdText, signature] = raw.split(".");
@@ -93,8 +91,8 @@ export function createApp() {
     res.setHeader("Set-Cookie", `bingo_auth=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`);
   };
 
-  const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const user = getAuthenticatedUser(req);
+  const requireAuth = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const user = await getAuthenticatedUser(req);
     if (!user) {
       res.status(401).json({ error: "Sessao expirada. Faca login novamente." });
       return;
@@ -124,15 +122,15 @@ export function createApp() {
       })
     : null;
 
-  app.get("/api/auth/bootstrap", (req, res) => {
-    const user = getAuthenticatedUser(req);
+  app.get("/api/auth/bootstrap", async (req, res) => {
+    const user = await getAuthenticatedUser(req);
     res.json({ authenticated: Boolean(user), user });
   });
 
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
     const username = String(req.body?.username ?? "");
     const password = String(req.body?.password ?? "");
-    const user = authenticateUser(username, password);
+    const user = await authenticateUser(username, password);
     if (!user) {
       res.status(401).json({ error: "Usuario ou senha invalidos." });
       return;
@@ -154,17 +152,17 @@ export function createApp() {
     requireAuth(req, res, next);
   });
 
-  app.get("/api/bootstrap", (_req, res) => {
-    res.json(getDashboardSnapshot());
+  app.get("/api/bootstrap", async (_req, res) => {
+    res.json(await getDashboardSnapshot());
   });
 
-  app.get("/api/users", requireAdmin, (_req, res) => {
-    res.json({ users: listUsers() });
+  app.get("/api/users", requireAdmin, async (_req, res) => {
+    res.json({ users: await listUsers() });
   });
 
-  app.post("/api/users", requireAdmin, (req, res) => {
+  app.post("/api/users", requireAdmin, async (req, res) => {
     try {
-      const user = createUser({
+      const user = await createUser({
         username: String(req.body?.username ?? ""),
         name: String(req.body?.name ?? ""),
         password: String(req.body?.password ?? ""),
@@ -176,9 +174,9 @@ export function createApp() {
     }
   });
 
-  app.patch("/api/users/:userId", requireAdmin, (req, res) => {
+  app.patch("/api/users/:userId", requireAdmin, async (req, res) => {
     try {
-      const user = updateUser(Number(req.params.userId), {
+      const user = await updateUser(Number(req.params.userId), {
         username: req.body?.username,
         name: req.body?.name,
         password: req.body?.password,
@@ -191,58 +189,58 @@ export function createApp() {
     }
   });
 
-  app.delete("/api/users/:userId", requireAdmin, (req, res) => {
+  app.delete("/api/users/:userId", requireAdmin, async (req, res) => {
     try {
-      const users = deleteUser(Number(req.params.userId));
+      const users = await deleteUser(Number(req.params.userId));
       res.json({ users });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.get("/api/themes", (_req, res) => {
-    res.json(listThemes());
+  app.get("/api/themes", async (_req, res) => {
+    res.json(await listThemes());
   });
 
-  app.post("/api/themes", (req, res) => {
+  app.post("/api/themes", async (req, res) => {
     try {
       const { name, preset = "romantic" } = req.body ?? {};
-      const theme = createTheme(String(name ?? ""), preset);
+      const theme = await createTheme(String(name ?? ""), preset);
       res.status(201).json(theme);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.delete("/api/themes/:themeId", (req, res) => {
+  app.delete("/api/themes/:themeId", async (req, res) => {
     try {
-      const result = deleteTheme(Number(req.params.themeId));
+      const result = await deleteTheme(Number(req.params.themeId));
       res.json(result);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.post("/api/themes/select", (req, res) => {
+  app.post("/api/themes/select", async (req, res) => {
     try {
-      const theme = setSelectedTheme(Number(req.body?.themeId));
+      const theme = await setSelectedTheme(Number(req.body?.themeId));
       res.json(theme);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.get("/api/themes/:themeId", (req, res) => {
+  app.get("/api/themes/:themeId", async (req, res) => {
     try {
-      res.json(getTheme(Number(req.params.themeId)));
+      res.json(await getTheme(Number(req.params.themeId)));
     } catch (error: any) {
       res.status(404).json({ error: error.message });
     }
   });
 
-  app.patch("/api/themes/:themeId", (req, res) => {
+  app.patch("/api/themes/:themeId", async (req, res) => {
     try {
-      const theme = updateTheme(Number(req.params.themeId), {
+      const theme = await updateTheme(Number(req.params.themeId), {
         name: req.body?.name,
         preset: req.body?.preset,
         cardTitle: req.body?.cardTitle,
@@ -253,73 +251,73 @@ export function createApp() {
     }
   });
 
-  app.post("/api/themes/:themeId/words", (req, res) => {
+  app.post("/api/themes/:themeId/words", async (req, res) => {
     try {
-      const words = addWord(Number(req.params.themeId), String(req.body?.word ?? ""));
+      const words = await addWord(Number(req.params.themeId), String(req.body?.word ?? ""));
       res.json({ words });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.put("/api/themes/:themeId/words", (req, res) => {
+  app.put("/api/themes/:themeId/words", async (req, res) => {
     try {
-      const words = updateWord(Number(req.params.themeId), String(req.body?.oldWord ?? ""), String(req.body?.newWord ?? ""));
+      const words = await updateWord(Number(req.params.themeId), String(req.body?.oldWord ?? ""), String(req.body?.newWord ?? ""));
       res.json({ words });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.delete("/api/themes/:themeId/words/:word", (req, res) => {
+  app.delete("/api/themes/:themeId/words/:word", async (req, res) => {
     try {
-      const words = removeWord(Number(req.params.themeId), decodeURIComponent(req.params.word));
+      const words = await removeWord(Number(req.params.themeId), decodeURIComponent(req.params.word));
       res.json({ words });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.post("/api/themes/:themeId/words/import", (req, res) => {
+  app.post("/api/themes/:themeId/words/import", async (req, res) => {
     try {
-      const result = importWords(Number(req.params.themeId), String(req.body?.rawText ?? ""));
+      const result = await importWords(Number(req.params.themeId), String(req.body?.rawText ?? ""));
       res.json(result);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.post("/api/themes/:themeId/words/reset", (req, res) => {
+  app.post("/api/themes/:themeId/words/reset", async (req, res) => {
     try {
-      const words = resetThemeWords(Number(req.params.themeId));
+      const words = await resetThemeWords(Number(req.params.themeId));
       res.json({ words });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.get("/api/blocks", (req, res) => {
+  app.get("/api/blocks", async (req, res) => {
     const themeId = req.query.themeId ? Number(req.query.themeId) : undefined;
-    res.json({ blocks: listBlocks(themeId) });
+    res.json({ blocks: await listBlocks(themeId) });
   });
 
-  app.patch("/api/blocks/:blockId/print-range", (req, res) => {
+  app.patch("/api/blocks/:blockId/print-range", async (req, res) => {
     try {
-      const block = updateBlockPrintRange(Number(req.params.blockId), Number(req.body?.printedStart), Number(req.body?.printedEnd));
+      const block = await updateBlockPrintRange(Number(req.params.blockId), Number(req.body?.printedStart), Number(req.body?.printedEnd));
       res.json(block);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.get("/api/round", (_req, res) => {
-    res.json({ round: getActiveRound() });
+  app.get("/api/round", async (_req, res) => {
+    res.json({ round: await getActiveRound() });
   });
 
-  app.post("/api/round/start", (req, res) => {
+  app.post("/api/round/start", async (req, res) => {
     try {
       const { themeId, name, type, victoryModes, cards } = req.body ?? {};
-      const round = saveBlockAndRound({
+      const round = await saveBlockAndRound({
         themeId: Number(themeId),
         name: String(name ?? "Bloco"),
         type,
@@ -332,8 +330,8 @@ export function createApp() {
     }
   });
 
-  app.post("/api/round/draw", (_req, res) => {
-    const round = drawWordForRound();
+  app.post("/api/round/draw", async (_req, res) => {
+    const round = await drawWordForRound();
     if (!round) {
       res.status(400).json({ error: "Nao ha rodada ativa ou nao restam palavras." });
       return;
@@ -341,20 +339,20 @@ export function createApp() {
     res.json({ round });
   });
 
-  app.post("/api/round/pause", (_req, res) => {
-    res.json({ round: pauseRound() });
+  app.post("/api/round/pause", async (_req, res) => {
+    res.json({ round: await pauseRound() });
   });
 
-  app.post("/api/round/resume", (_req, res) => {
-    res.json({ round: resumeRound() });
+  app.post("/api/round/resume", async (_req, res) => {
+    res.json({ round: await resumeRound() });
   });
 
-  app.post("/api/round/reset", (_req, res) => {
-    res.json({ round: resetRound() });
+  app.post("/api/round/reset", async (_req, res) => {
+    res.json({ round: await resetRound() });
   });
 
-  app.post("/api/round/end", (_req, res) => {
-    endRound();
+  app.post("/api/round/end", async (_req, res) => {
+    await endRound();
     res.json({ round: null });
   });
 

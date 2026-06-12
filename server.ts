@@ -1,4 +1,5 @@
 import express from "express";
+import "./env";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { createApp } from "./app";

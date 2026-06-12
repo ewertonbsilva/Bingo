@@ -1,7 +1,6 @@
-import fs from "fs";
-import path from "path";
 import crypto from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import "./env";
+import { Pool } from "pg";
 import { INITIAL_WORDS } from "./src/data/initialWords";
 
 export type BingoType = "3x3" | "5x5";
@@ -62,17 +61,12 @@ export interface ActiveRoundRecord {
   nearWins: NearWinAlert[];
 }
 
-const dataDir = process.env.VERCEL
-  ? path.join("/tmp", "bingo-data")
-  : path.join(process.cwd(), "data");
-const dbPath = path.join(dataDir, "bingo.sqlite");
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_URL || process.env.DATABASE_URL,
+  ssl: process.env.POSTGRES_URL || process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined,
+});
 
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-const db = new DatabaseSync(dbPath);
-db.exec("PRAGMA foreign_keys = ON");
+let initialized: Promise<void> | null = null;
 
 function normalizeWord(value: string) {
   const sanitized = value
@@ -100,134 +94,6 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "") || "tema";
 }
 
-function createSchema() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS app_settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS themes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      slug TEXT NOT NULL UNIQUE,
-      preset TEXT NOT NULL DEFAULT 'romantic',
-      card_title TEXT NOT NULL DEFAULT 'Cartela Oficial',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS words (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      theme_id INTEGER NOT NULL,
-      value TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(theme_id, value),
-      FOREIGN KEY(theme_id) REFERENCES themes(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'operator',
-      is_active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS card_blocks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      theme_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      bingo_type TEXT NOT NULL,
-      victory_modes_json TEXT NOT NULL,
-      total_cards INTEGER NOT NULL,
-      printed_start INTEGER,
-      printed_end INTEGER,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(theme_id) REFERENCES themes(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS cards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      block_id INTEGER NOT NULL,
-      sequence_number INTEGER NOT NULL,
-      code TEXT NOT NULL,
-      grid_json TEXT NOT NULL,
-      UNIQUE(block_id, sequence_number),
-      FOREIGN KEY(block_id) REFERENCES card_blocks(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS rounds (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      theme_id INTEGER NOT NULL,
-      block_id INTEGER NOT NULL,
-      is_active INTEGER NOT NULL DEFAULT 1,
-      drawn_words_json TEXT NOT NULL DEFAULT '[]',
-      last_drawn_word TEXT,
-      start_time TEXT,
-      is_paused INTEGER NOT NULL DEFAULT 0,
-      paused_seconds INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(theme_id) REFERENCES themes(id) ON DELETE CASCADE,
-      FOREIGN KEY(block_id) REFERENCES card_blocks(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS near_win_alerts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      round_id INTEGER NOT NULL,
-      card_id INTEGER NOT NULL,
-      card_code TEXT NOT NULL,
-      sequence_number INTEGER NOT NULL,
-      matched_mode TEXT NOT NULL,
-      missing_count INTEGER NOT NULL,
-      missing_words_json TEXT NOT NULL,
-      fingerprint TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(round_id, fingerprint),
-      FOREIGN KEY(round_id) REFERENCES rounds(id) ON DELETE CASCADE,
-      FOREIGN KEY(card_id) REFERENCES cards(id) ON DELETE CASCADE
-    );
-  `);
-}
-
-function seedDefaults() {
-  const themeCount = Number(db.prepare("SELECT COUNT(*) AS count FROM themes").get().count);
-  if (themeCount > 0) return;
-
-  const insertTheme = db.prepare("INSERT INTO themes (name, slug, preset) VALUES (?, ?, ?)");
-  const insertWord = db.prepare("INSERT OR IGNORE INTO words (theme_id, value) VALUES (?, ?)");
-
-  const romanticId = Number(insertTheme.run("Rede de Casais", "rede-de-casais", "romantic").lastInsertRowid);
-  insertTheme.run("Noite Escura", "noite-escura", "dark");
-  insertTheme.run("Celebração Clara", "celebracao-clara", "light");
-
-  for (const word of INITIAL_WORDS) {
-    const normalized = normalizeWord(word);
-    if (normalized) insertWord.run(romanticId, normalized);
-  }
-
-  db.prepare("INSERT INTO app_settings (key, value) VALUES ('selected_theme_id', ?)").run(String(romanticId));
-
-  const usersCount = Number(db.prepare("SELECT COUNT(*) AS count FROM users").get().count);
-  if (usersCount === 0) {
-    const passwordHash = hashPassword("admin123");
-    db.prepare(`
-      INSERT INTO users (username, name, password_hash, role, is_active)
-      VALUES (?, ?, ?, 'admin', 1)
-    `).run("admin", "Administrador", passwordHash);
-  }
-}
-
-createSchema();
-try {
-  db.exec("ALTER TABLE themes ADD COLUMN card_title TEXT NOT NULL DEFAULT 'Cartela Oficial'");
-} catch {
-  // Column already exists in upgraded databases.
-}
-seedDefaults();
-
 function hashPassword(password: string) {
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.scryptSync(password, salt, 64).toString("hex");
@@ -241,290 +107,197 @@ function verifyPassword(password: string, storedHash: string) {
   return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(derived, "hex"));
 }
 
-function getSelectedThemeId() {
-  const row = db.prepare("SELECT value FROM app_settings WHERE key = 'selected_theme_id'").get() as { value: string } | undefined;
-  if (row) return Number(row.value);
-  const firstTheme = db.prepare("SELECT id FROM themes ORDER BY id LIMIT 1").get() as { id: number } | undefined;
-  return firstTheme?.id ?? 1;
-}
-
-function setSelectedThemeId(themeId: number) {
-  db.prepare(`
-    INSERT INTO app_settings (key, value) VALUES ('selected_theme_id', ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `).run(String(themeId));
-}
-
-export function listThemes() {
-  const themes = db.prepare("SELECT id, name, slug, preset, card_title AS cardTitle FROM themes ORDER BY name").all() as unknown as StoredTheme[];
-  const selectedThemeId = getSelectedThemeId();
-  return { themes, selectedThemeId };
-}
-
-export function createTheme(name: string, preset: StoredTheme["preset"]) {
-  const cleanName = name.trim();
-  if (!cleanName) throw new Error("Nome do tema e obrigatorio.");
-  const slugBase = slugify(cleanName);
-  let slug = slugBase;
-  let suffix = 2;
-  while (db.prepare("SELECT 1 FROM themes WHERE slug = ?").get(slug)) {
-    slug = `${slugBase}-${suffix++}`;
+async function ensureInitialized() {
+  if (!initialized) {
+    initialized = initializeDatabase();
   }
-  const result = db.prepare("INSERT INTO themes (name, slug, preset, card_title) VALUES (?, ?, ?, ?)").run(cleanName, slug, preset, cleanName);
-  const themeId = Number(result.lastInsertRowid);
-  return getTheme(themeId);
+  await initialized;
 }
 
-export function updateTheme(themeId: number, input: { name?: string; preset?: StoredTheme["preset"]; cardTitle?: string }) {
-  const current = getTheme(themeId);
-  const nextName = input.name?.trim() || current.name;
-  const nextPreset = input.preset || current.preset;
-  const nextCardTitle = input.cardTitle?.trim() || current.cardTitle || current.name;
-  db.prepare("UPDATE themes SET name = ?, preset = ?, card_title = ? WHERE id = ?").run(nextName, nextPreset, nextCardTitle, themeId);
-  return getTheme(themeId);
-}
+async function initializeDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
 
-export function deleteTheme(themeId: number) {
-  const count = Number(db.prepare("SELECT COUNT(*) AS count FROM themes").get().count);
-  if (count <= 1) {
-    throw new Error("Nao e permitido excluir o ultimo tema.");
-  }
+    CREATE TABLE IF NOT EXISTS themes (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      slug TEXT NOT NULL UNIQUE,
+      preset TEXT NOT NULL DEFAULT 'romantic',
+      card_title TEXT NOT NULL DEFAULT 'Cartela Oficial',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
-  const theme = db.prepare("SELECT id FROM themes WHERE id = ?").get(themeId) as { id: number } | undefined;
-  if (!theme) {
-    throw new Error("Tema nao encontrado.");
-  }
+    CREATE TABLE IF NOT EXISTS words (
+      id BIGSERIAL PRIMARY KEY,
+      theme_id BIGINT NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
+      value TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(theme_id, value)
+    );
 
-  const activeRound = getActiveRound();
-  if (activeRound?.themeId === themeId) {
-    throw new Error("Finalize a rodada ativa antes de excluir este tema.");
-  }
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGSERIAL PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'operator',
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
-  db.prepare("DELETE FROM themes WHERE id = ?").run(themeId);
+    CREATE TABLE IF NOT EXISTS card_blocks (
+      id BIGSERIAL PRIMARY KEY,
+      theme_id BIGINT NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      bingo_type TEXT NOT NULL,
+      victory_modes_json JSONB NOT NULL,
+      total_cards INTEGER NOT NULL,
+      printed_start INTEGER,
+      printed_end INTEGER,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
-  const selectedThemeId = getSelectedThemeId();
-  if (selectedThemeId === themeId) {
-    const fallback = db.prepare("SELECT id FROM themes ORDER BY id LIMIT 1").get() as { id: number } | undefined;
-    if (fallback) {
-      setSelectedThemeId(fallback.id);
+    CREATE TABLE IF NOT EXISTS cards (
+      id BIGSERIAL PRIMARY KEY,
+      block_id BIGINT NOT NULL REFERENCES card_blocks(id) ON DELETE CASCADE,
+      sequence_number INTEGER NOT NULL,
+      code TEXT NOT NULL,
+      grid_json JSONB NOT NULL,
+      UNIQUE(block_id, sequence_number)
+    );
+
+    CREATE TABLE IF NOT EXISTS rounds (
+      id BIGSERIAL PRIMARY KEY,
+      theme_id BIGINT NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
+      block_id BIGINT NOT NULL REFERENCES card_blocks(id) ON DELETE CASCADE,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      drawn_words_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+      last_drawn_word TEXT,
+      start_time TIMESTAMPTZ,
+      is_paused BOOLEAN NOT NULL DEFAULT FALSE,
+      paused_seconds INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS near_win_alerts (
+      id BIGSERIAL PRIMARY KEY,
+      round_id BIGINT NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+      card_id BIGINT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+      card_code TEXT NOT NULL,
+      sequence_number INTEGER NOT NULL,
+      matched_mode TEXT NOT NULL,
+      missing_count INTEGER NOT NULL,
+      missing_words_json JSONB NOT NULL,
+      fingerprint TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(round_id, fingerprint)
+    );
+  `);
+
+  const themeCount = Number((await pool.query("SELECT COUNT(*)::int AS count FROM themes")).rows[0].count);
+  if (themeCount === 0) {
+    const romantic = await pool.query(
+      "INSERT INTO themes (name, slug, preset, card_title) VALUES ($1, $2, $3, $4) RETURNING id",
+      ["Rede de Casais", "rede-de-casais", "romantic", "Rede de Casais"]
+    );
+    const romanticId = Number(romantic.rows[0].id);
+    await pool.query("INSERT INTO themes (name, slug, preset, card_title) VALUES ($1, $2, $3, $4)", ["Noite Escura", "noite-escura", "dark", "Noite Escura"]);
+    await pool.query("INSERT INTO themes (name, slug, preset, card_title) VALUES ($1, $2, $3, $4)", ["Celebracao Clara", "celebracao-clara", "light", "Celebracao Clara"]);
+    for (const word of INITIAL_WORDS) {
+      const normalized = normalizeWord(word);
+      if (normalized) {
+        await pool.query("INSERT INTO words (theme_id, value) VALUES ($1, $2) ON CONFLICT (theme_id, value) DO NOTHING", [romanticId, normalized]);
+      }
     }
+    await pool.query(
+      "INSERT INTO app_settings (key, value) VALUES ('selected_theme_id', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+      [String(romanticId)]
+    );
   }
 
-  return listThemes();
-}
-
-export function getTheme(themeId: number) {
-  const theme = db.prepare("SELECT id, name, slug, preset, card_title AS cardTitle FROM themes WHERE id = ?").get(themeId) as unknown as StoredTheme | undefined;
-  if (!theme) throw new Error("Tema nao encontrado.");
-  const words = db.prepare("SELECT value FROM words WHERE theme_id = ? ORDER BY value").all(themeId).map((row: any) => row.value as string);
-  return { ...theme, words };
-}
-
-export function setSelectedTheme(themeId: number) {
-  getTheme(themeId);
-  setSelectedThemeId(themeId);
-  return getTheme(themeId);
-}
-
-export function addWord(themeId: number, value: string) {
-  const word = normalizeWord(value);
-  if (!word) throw new Error("Palavra invalida.");
-  const exists = db.prepare("SELECT 1 FROM words WHERE theme_id = ? AND value = ?").get(themeId, word);
-  if (exists) {
-    throw new Error("Ja existe uma palavra igual neste tema.");
+  const userCount = Number((await pool.query("SELECT COUNT(*)::int AS count FROM users")).rows[0].count);
+  if (userCount === 0) {
+    await pool.query(
+      "INSERT INTO users (username, name, password_hash, role, is_active) VALUES ($1, $2, $3, 'admin', TRUE)",
+      ["admin", "Administrador", hashPassword("admin123")]
+    );
   }
-  db.prepare("INSERT INTO words (theme_id, value) VALUES (?, ?)").run(themeId, word);
-  return getTheme(themeId).words;
 }
 
-export function updateWord(themeId: number, oldValue: string, newValue: string) {
-  const oldWord = normalizeWord(oldValue);
-  const nextWord = normalizeWord(newValue);
-  if (!oldWord || !nextWord) throw new Error("Palavra invalida.");
-  const exists = db.prepare("SELECT 1 FROM words WHERE theme_id = ? AND value = ? AND value <> ?").get(themeId, nextWord, oldWord);
-  if (exists) {
-    throw new Error("Ja existe uma palavra igual neste tema.");
-  }
-  db.prepare("UPDATE words SET value = ? WHERE theme_id = ? AND value = ?").run(nextWord, themeId, oldWord);
-  return getTheme(themeId).words;
+async function getSelectedThemeId() {
+  await ensureInitialized();
+  const row = (await pool.query("SELECT value FROM app_settings WHERE key = 'selected_theme_id'")).rows[0] as { value: string } | undefined;
+  if (row) return Number(row.value);
+  const firstTheme = (await pool.query("SELECT id FROM themes ORDER BY id LIMIT 1")).rows[0] as { id: number } | undefined;
+  return Number(firstTheme?.id ?? 1);
 }
 
-export function removeWord(themeId: number, value: string) {
-  const word = normalizeWord(value);
-  db.prepare("DELETE FROM words WHERE theme_id = ? AND value = ?").run(themeId, word);
-  return getTheme(themeId).words;
+async function setSelectedThemeId(themeId: number) {
+  await ensureInitialized();
+  await pool.query(
+    "INSERT INTO app_settings (key, value) VALUES ('selected_theme_id', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+    [String(themeId)]
+  );
 }
 
-export function importWords(themeId: number, rawText: string) {
-  const insertWord = db.prepare("INSERT OR IGNORE INTO words (theme_id, value) VALUES (?, ?)");
-  const values = rawText
-    .split(/[\n,;]+/)
-    .map((item) => normalizeWord(item))
-    .filter(Boolean);
-  let inserted = 0;
-  for (const word of values) {
-    const result = insertWord.run(themeId, word);
-    if (result.changes > 0) inserted++;
-  }
-  return { inserted, words: getTheme(themeId).words };
-}
-
-export function resetThemeWords(themeId: number) {
-  db.prepare("DELETE FROM words WHERE theme_id = ?").run(themeId);
-  for (const word of INITIAL_WORDS) {
-    const normalized = normalizeWord(word);
-    if (normalized) db.prepare("INSERT OR IGNORE INTO words (theme_id, value) VALUES (?, ?)").run(themeId, normalized);
-  }
-  return getTheme(themeId).words;
-}
-
-export function listBlocks(themeId?: number) {
-  const rows = db.prepare(`
-    SELECT b.id, b.theme_id AS themeId, t.name AS themeName, b.name, b.bingo_type AS type,
-           b.total_cards AS totalCards, b.printed_start AS printedStart, b.printed_end AS printedEnd,
-           b.created_at AS createdAt
-    FROM card_blocks b
-    JOIN themes t ON t.id = b.theme_id
-    ${themeId ? "WHERE b.theme_id = ?" : ""}
-    ORDER BY b.id DESC
-  `).all(...(themeId ? [themeId] : []));
-  return rows;
-}
-
-export function updateBlockPrintRange(blockId: number, printedStart: number, printedEnd: number) {
-  db.prepare("UPDATE card_blocks SET printed_start = ?, printed_end = ? WHERE id = ?").run(printedStart, printedEnd, blockId);
-  return db.prepare(`
-    SELECT id, theme_id AS themeId, name, bingo_type AS type, total_cards AS totalCards,
-           printed_start AS printedStart, printed_end AS printedEnd
-    FROM card_blocks WHERE id = ?
-  `).get(blockId);
-}
-
-export function saveBlockAndRound(input: {
-  themeId: number;
-  name: string;
-  type: BingoType;
-  victoryModes: VictoryMode[];
-  cards: Array<{ code: string; grid: string[][] }>;
-}) {
-  db.prepare("UPDATE rounds SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE is_active = 1").run();
-  const blockResult = db.prepare(`
-    INSERT INTO card_blocks (theme_id, name, bingo_type, victory_modes_json, total_cards)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(input.themeId, input.name, input.type, JSON.stringify(input.victoryModes), input.cards.length);
-  const blockId = Number(blockResult.lastInsertRowid);
-  const insertCard = db.prepare("INSERT INTO cards (block_id, sequence_number, code, grid_json) VALUES (?, ?, ?, ?)");
-  input.cards.forEach((card, index) => {
-    insertCard.run(blockId, index + 1, card.code, JSON.stringify(card.grid));
-  });
-  const roundResult = db.prepare(`
-    INSERT INTO rounds (theme_id, block_id, is_active, drawn_words_json, start_time, is_paused, paused_seconds)
-    VALUES (?, ?, 1, '[]', ?, 0, 0)
-  `).run(input.themeId, blockId, new Date().toISOString());
-  return getActiveRound(Number(roundResult.lastInsertRowid));
-}
-
-function getCardsByBlock(blockId: number): StoredCard[] {
-  return db.prepare(`
-    SELECT id, sequence_number AS sequenceNumber, code, grid_json AS gridJson
-    FROM cards
-    WHERE block_id = ?
-    ORDER BY sequence_number
-  `).all(blockId).map((row: any) => ({
-    id: row.id,
-    sequenceNumber: row.sequenceNumber,
+async function getCardsByBlock(blockId: number): Promise<StoredCard[]> {
+  const { rows } = await pool.query(
+    `SELECT id, sequence_number AS "sequenceNumber", code, grid_json AS "gridJson"
+     FROM cards WHERE block_id = $1 ORDER BY sequence_number`,
+    [blockId]
+  );
+  return rows.map((row: any) => ({
+    id: Number(row.id),
+    sequenceNumber: Number(row.sequenceNumber),
     code: row.code,
-    grid: JSON.parse(row.gridJson),
+    grid: row.gridJson,
   }));
 }
 
-function getNearWins(roundId: number): NearWinAlert[] {
-  return db.prepare(`
-    SELECT id, card_id AS cardId, card_code AS cardCode, sequence_number AS sequenceNumber,
-           matched_mode AS matchedMode, missing_count AS missingCount,
-           missing_words_json AS missingWordsJson, created_at AS createdAt
-    FROM near_win_alerts
-    WHERE round_id = ?
-    ORDER BY missing_count ASC, id DESC
-    LIMIT 100
-  `).all(roundId).map((row: any) => ({
-    id: row.id,
-    cardId: row.cardId,
+async function getNearWins(roundId: number): Promise<NearWinAlert[]> {
+  const { rows } = await pool.query(
+    `SELECT id, card_id AS "cardId", card_code AS "cardCode", sequence_number AS "sequenceNumber",
+            matched_mode AS "matchedMode", missing_count AS "missingCount",
+            missing_words_json AS "missingWords", created_at AS "createdAt"
+     FROM near_win_alerts
+     WHERE round_id = $1
+     ORDER BY missing_count ASC, id DESC
+     LIMIT 100`,
+    [roundId]
+  );
+  return rows.map((row: any) => ({
+    id: Number(row.id),
+    cardId: Number(row.cardId),
     cardCode: row.cardCode,
-    sequenceNumber: row.sequenceNumber,
+    sequenceNumber: Number(row.sequenceNumber),
     matchedMode: row.matchedMode,
-    missingCount: row.missingCount,
-    missingWords: JSON.parse(row.missingWordsJson),
+    missingCount: Number(row.missingCount),
+    missingWords: row.missingWords,
     createdAt: row.createdAt,
   }));
 }
 
-export function getActiveRound(roundId?: number): ActiveRoundRecord | null {
-  const row = db.prepare(`
-    SELECT r.id, r.theme_id AS themeId, r.block_id AS blockId, r.is_active AS isActive,
-           r.drawn_words_json AS drawnWordsJson, r.last_drawn_word AS lastDrawnWord,
-           r.start_time AS startTime, r.is_paused AS isPaused, r.paused_seconds AS pausedSeconds,
-           b.bingo_type AS type, b.victory_modes_json AS victoryModesJson, b.total_cards AS totalCards,
-           b.printed_start AS printedStart, b.printed_end AS printedEnd, b.name AS blockName
-    FROM rounds r
-    JOIN card_blocks b ON b.id = r.block_id
-    WHERE ${roundId ? "r.id = ?" : "r.is_active = 1"}
-    ORDER BY r.id DESC
-    LIMIT 1
-  `).get(...(roundId ? [roundId] : [])) as any;
-  if (!row) return null;
-  return {
-    id: row.id,
-    themeId: row.themeId,
-    blockId: row.blockId,
-    isActive: Boolean(row.isActive),
-    type: row.type,
-    victoryModes: JSON.parse(row.victoryModesJson),
-    totalCards: row.totalCards,
-    cards: getCardsByBlock(row.blockId),
-    drawnWords: JSON.parse(row.drawnWordsJson),
-    startTime: row.startTime,
-    isPaused: Boolean(row.isPaused),
-    pausedSeconds: row.pausedSeconds,
-    lastDrawnWord: row.lastDrawnWord,
-    printedStart: row.printedStart,
-    printedEnd: row.printedEnd,
-    blockName: row.blockName,
-    nearWins: getNearWins(row.id),
-  };
-}
-
 function getWinningLines(grid: string[][], mode: VictoryMode) {
   const size = grid.length;
-  if (mode === "full_card") {
-    return [grid.flat()];
-  }
-  const lines: string[][][] = [];
+  if (mode === "full_card") return [grid.flat()];
+  const lines: string[][] = [];
   if (mode === "horizontal") {
-    for (let r = 0; r < size; r++) lines.push([grid[r]]);
+    for (let r = 0; r < size; r++) lines.push(grid[r]);
   }
   if (mode === "vertical") {
-    for (let c = 0; c < size; c++) {
-      lines.push([Array.from({ length: size }, (_, r) => grid[r][c])]);
-    }
+    for (let c = 0; c < size; c++) lines.push(Array.from({ length: size }, (_, r) => grid[r][c]));
   }
-  if (mode === "diagonal") {
-    lines.push([Array.from({ length: size }, (_, i) => grid[i][i])]);
-  }
-  if (mode === "diagonal_inverse") {
-    lines.push([Array.from({ length: size }, (_, i) => grid[i][size - 1 - i])]);
-  }
-  return lines.map((entry) => entry[0]);
+  if (mode === "diagonal") lines.push(Array.from({ length: size }, (_, i) => grid[i][i]));
+  if (mode === "diagonal_inverse") lines.push(Array.from({ length: size }, (_, i) => grid[i][size - 1 - i]));
+  return lines;
 }
 
-function detectNearWins(round: ActiveRoundRecord) {
+async function detectNearWins(round: ActiveRoundRecord) {
   const drawn = new Set(round.drawnWords);
-  const insertAlert = db.prepare(`
-    INSERT OR IGNORE INTO near_win_alerts
-    (round_id, card_id, card_code, sequence_number, matched_mode, missing_count, missing_words_json, fingerprint)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
   for (const card of round.cards) {
     for (const mode of round.victoryModes) {
       for (const line of getWinningLines(card.grid, mode)) {
@@ -532,178 +305,364 @@ function detectNearWins(round: ActiveRoundRecord) {
         const missingWords = relevant.filter((word) => !drawn.has(word));
         if (missingWords.length > 0 && missingWords.length <= 2) {
           const fingerprint = `${card.id}:${mode}:${missingWords.join("|")}`;
-          insertAlert.run(round.id, card.id, card.code, card.sequenceNumber, mode, missingWords.length, JSON.stringify(missingWords), fingerprint);
+          await pool.query(
+            `INSERT INTO near_win_alerts
+             (round_id, card_id, card_code, sequence_number, matched_mode, missing_count, missing_words_json, fingerprint)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+             ON CONFLICT (round_id, fingerprint) DO NOTHING`,
+            [round.id, card.id, card.code, card.sequenceNumber, mode, missingWords.length, JSON.stringify(missingWords), fingerprint]
+          );
         }
       }
     }
   }
 }
 
-export function drawWordForRound() {
-  const round = getActiveRound();
+export async function listThemes() {
+  await ensureInitialized();
+  const { rows } = await pool.query("SELECT id, name, slug, preset, card_title AS \"cardTitle\" FROM themes ORDER BY name");
+  return { themes: rows as StoredTheme[], selectedThemeId: await getSelectedThemeId() };
+}
+
+export async function getTheme(themeId: number) {
+  await ensureInitialized();
+  const theme = (await pool.query("SELECT id, name, slug, preset, card_title AS \"cardTitle\" FROM themes WHERE id = $1", [themeId])).rows[0] as StoredTheme | undefined;
+  if (!theme) throw new Error("Tema nao encontrado.");
+  const words = (await pool.query("SELECT value FROM words WHERE theme_id = $1 ORDER BY value", [themeId])).rows.map((row: any) => row.value as string);
+  return { ...theme, words };
+}
+
+export async function setSelectedTheme(themeId: number) {
+  await getTheme(themeId);
+  await setSelectedThemeId(themeId);
+  return getTheme(themeId);
+}
+
+export async function createTheme(name: string, preset: StoredTheme["preset"]) {
+  await ensureInitialized();
+  const cleanName = name.trim();
+  if (!cleanName) throw new Error("Nome do tema e obrigatorio.");
+  const slugBase = slugify(cleanName);
+  let slug = slugBase;
+  let suffix = 2;
+  while ((await pool.query("SELECT 1 FROM themes WHERE slug = $1", [slug])).rowCount) {
+    slug = `${slugBase}-${suffix++}`;
+  }
+  const result = await pool.query(
+    "INSERT INTO themes (name, slug, preset, card_title) VALUES ($1, $2, $3, $4) RETURNING id",
+    [cleanName, slug, preset, cleanName]
+  );
+  return getTheme(Number(result.rows[0].id));
+}
+
+export async function updateTheme(themeId: number, input: { name?: string; preset?: StoredTheme["preset"]; cardTitle?: string }) {
+  const current = await getTheme(themeId);
+  const nextName = input.name?.trim() || current.name;
+  const nextPreset = input.preset || current.preset;
+  const nextCardTitle = input.cardTitle?.trim() || current.cardTitle || current.name;
+  await pool.query("UPDATE themes SET name = $1, preset = $2, card_title = $3 WHERE id = $4", [nextName, nextPreset, nextCardTitle, themeId]);
+  return getTheme(themeId);
+}
+
+export async function deleteTheme(themeId: number) {
+  const count = Number((await pool.query("SELECT COUNT(*)::int AS count FROM themes")).rows[0].count);
+  if (count <= 1) throw new Error("Nao e permitido excluir o ultimo tema.");
+  if (!(await pool.query("SELECT 1 FROM themes WHERE id = $1", [themeId])).rowCount) throw new Error("Tema nao encontrado.");
+  const activeRound = await getActiveRound();
+  if (activeRound?.themeId === themeId) throw new Error("Finalize a rodada ativa antes de excluir este tema.");
+  await pool.query("DELETE FROM themes WHERE id = $1", [themeId]);
+  if ((await getSelectedThemeId()) === themeId) {
+    const fallback = (await pool.query("SELECT id FROM themes ORDER BY id LIMIT 1")).rows[0] as { id: number } | undefined;
+    if (fallback) await setSelectedThemeId(Number(fallback.id));
+  }
+  return listThemes();
+}
+
+export async function addWord(themeId: number, value: string) {
+  const word = normalizeWord(value);
+  if (!word) throw new Error("Palavra invalida.");
+  if ((await pool.query("SELECT 1 FROM words WHERE theme_id = $1 AND value = $2", [themeId, word])).rowCount) {
+    throw new Error("Ja existe uma palavra igual neste tema.");
+  }
+  await pool.query("INSERT INTO words (theme_id, value) VALUES ($1, $2)", [themeId, word]);
+  return (await getTheme(themeId)).words;
+}
+
+export async function updateWord(themeId: number, oldValue: string, newValue: string) {
+  const oldWord = normalizeWord(oldValue);
+  const nextWord = normalizeWord(newValue);
+  if (!oldWord || !nextWord) throw new Error("Palavra invalida.");
+  if ((await pool.query("SELECT 1 FROM words WHERE theme_id = $1 AND value = $2 AND value <> $3", [themeId, nextWord, oldWord])).rowCount) {
+    throw new Error("Ja existe uma palavra igual neste tema.");
+  }
+  await pool.query("UPDATE words SET value = $1 WHERE theme_id = $2 AND value = $3", [nextWord, themeId, oldWord]);
+  return (await getTheme(themeId)).words;
+}
+
+export async function removeWord(themeId: number, value: string) {
+  const word = normalizeWord(value);
+  await pool.query("DELETE FROM words WHERE theme_id = $1 AND value = $2", [themeId, word]);
+  return (await getTheme(themeId)).words;
+}
+
+export async function importWords(themeId: number, rawText: string) {
+  const values = rawText
+    .split(/[\n,;]+/)
+    .map((item) => normalizeWord(item))
+    .filter(Boolean);
+  let inserted = 0;
+  for (const word of values) {
+    const result = await pool.query(
+      "INSERT INTO words (theme_id, value) VALUES ($1, $2) ON CONFLICT (theme_id, value) DO NOTHING",
+      [themeId, word]
+    );
+    inserted += result.rowCount;
+  }
+  return { inserted, words: (await getTheme(themeId)).words };
+}
+
+export async function resetThemeWords(themeId: number) {
+  await pool.query("DELETE FROM words WHERE theme_id = $1", [themeId]);
+  for (const word of INITIAL_WORDS) {
+    const normalized = normalizeWord(word);
+    if (normalized) await pool.query("INSERT INTO words (theme_id, value) VALUES ($1, $2) ON CONFLICT (theme_id, value) DO NOTHING", [themeId, normalized]);
+  }
+  return (await getTheme(themeId)).words;
+}
+
+export async function listBlocks(themeId?: number) {
+  const query = `
+    SELECT b.id, b.theme_id AS "themeId", t.name AS "themeName", b.name, b.bingo_type AS type,
+           b.total_cards AS "totalCards", b.printed_start AS "printedStart", b.printed_end AS "printedEnd",
+           b.created_at AS "createdAt"
+    FROM card_blocks b
+    JOIN themes t ON t.id = b.theme_id
+    ${themeId ? "WHERE b.theme_id = $1" : ""}
+    ORDER BY b.id DESC
+  `;
+  return (await pool.query(query, themeId ? [themeId] : [])).rows;
+}
+
+export async function updateBlockPrintRange(blockId: number, printedStart: number, printedEnd: number) {
+  const { rows } = await pool.query(
+    `UPDATE card_blocks SET printed_start = $1, printed_end = $2
+     WHERE id = $3
+     RETURNING id, theme_id AS "themeId", name, bingo_type AS type, total_cards AS "totalCards",
+               printed_start AS "printedStart", printed_end AS "printedEnd"`,
+    [printedStart, printedEnd, blockId]
+  );
+  return rows[0];
+}
+
+export async function saveBlockAndRound(input: {
+  themeId: number;
+  name: string;
+  type: BingoType;
+  victoryModes: VictoryMode[];
+  cards: Array<{ code: string; grid: string[][] }>;
+}) {
+  await pool.query("UPDATE rounds SET is_active = FALSE, updated_at = NOW() WHERE is_active = TRUE");
+  const block = await pool.query(
+    `INSERT INTO card_blocks (theme_id, name, bingo_type, victory_modes_json, total_cards)
+     VALUES ($1, $2, $3, $4::jsonb, $5) RETURNING id`,
+    [input.themeId, input.name, input.type, JSON.stringify(input.victoryModes), input.cards.length]
+  );
+  const blockId = Number(block.rows[0].id);
+  for (let i = 0; i < input.cards.length; i++) {
+    const card = input.cards[i];
+    await pool.query(
+      "INSERT INTO cards (block_id, sequence_number, code, grid_json) VALUES ($1, $2, $3, $4::jsonb)",
+      [blockId, i + 1, card.code, JSON.stringify(card.grid)]
+    );
+  }
+  const round = await pool.query(
+    `INSERT INTO rounds (theme_id, block_id, is_active, drawn_words_json, start_time, is_paused, paused_seconds)
+     VALUES ($1, $2, TRUE, '[]'::jsonb, $3, FALSE, 0) RETURNING id`,
+    [input.themeId, blockId, new Date().toISOString()]
+  );
+  return getActiveRound(Number(round.rows[0].id));
+}
+
+export async function getActiveRound(roundId?: number): Promise<ActiveRoundRecord | null> {
+  await ensureInitialized();
+  const { rows } = await pool.query(
+    `SELECT r.id, r.theme_id AS "themeId", r.block_id AS "blockId", r.is_active AS "isActive",
+            r.drawn_words_json AS "drawnWords", r.last_drawn_word AS "lastDrawnWord",
+            r.start_time AS "startTime", r.is_paused AS "isPaused", r.paused_seconds AS "pausedSeconds",
+            b.bingo_type AS type, b.victory_modes_json AS "victoryModes", b.total_cards AS "totalCards",
+            b.printed_start AS "printedStart", b.printed_end AS "printedEnd", b.name AS "blockName"
+     FROM rounds r
+     JOIN card_blocks b ON b.id = r.block_id
+     WHERE ${roundId ? "r.id = $1" : "r.is_active = TRUE"}
+     ORDER BY r.id DESC
+     LIMIT 1`,
+    roundId ? [roundId] : []
+  );
+  const row = rows[0] as any;
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    themeId: Number(row.themeId),
+    blockId: Number(row.blockId),
+    isActive: Boolean(row.isActive),
+    type: row.type,
+    victoryModes: row.victoryModes,
+    totalCards: Number(row.totalCards),
+    cards: await getCardsByBlock(Number(row.blockId)),
+    drawnWords: row.drawnWords,
+    startTime: row.startTime,
+    isPaused: Boolean(row.isPaused),
+    pausedSeconds: Number(row.pausedSeconds),
+    lastDrawnWord: row.lastDrawnWord,
+    printedStart: row.printedStart,
+    printedEnd: row.printedEnd,
+    blockName: row.blockName,
+    nearWins: await getNearWins(Number(row.id)),
+  };
+}
+
+export async function drawWordForRound() {
+  const round = await getActiveRound();
   if (!round || !round.isActive) return null;
-  const theme = getTheme(round.themeId);
+  const theme = await getTheme(round.themeId);
   const available = theme.words.filter((word) => !round.drawnWords.includes(word));
   if (available.length === 0) return null;
   const selected = available[Math.floor(Math.random() * available.length)];
   const nextDrawn = [...round.drawnWords, selected];
-  db.prepare(`
-    UPDATE rounds
-    SET drawn_words_json = ?, last_drawn_word = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(JSON.stringify(nextDrawn), selected, round.id);
-  const updated = getActiveRound(round.id);
-  if (updated) detectNearWins(updated);
+  await pool.query(
+    "UPDATE rounds SET drawn_words_json = $1::jsonb, last_drawn_word = $2, updated_at = NOW() WHERE id = $3",
+    [JSON.stringify(nextDrawn), selected, round.id]
+  );
+  const updated = await getActiveRound(round.id);
+  if (updated) await detectNearWins(updated);
   return getActiveRound(round.id);
 }
 
-export function pauseRound() {
-  const round = getActiveRound();
+export async function pauseRound() {
+  const round = await getActiveRound();
   if (!round || !round.startTime || round.isPaused) return round;
   const currentElapsed = Math.floor((Date.now() - new Date(round.startTime).getTime()) / 1000) - round.pausedSeconds;
-  db.prepare("UPDATE rounds SET is_paused = 1, paused_seconds = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(currentElapsed, round.id);
+  await pool.query("UPDATE rounds SET is_paused = TRUE, paused_seconds = $1, updated_at = NOW() WHERE id = $2", [currentElapsed, round.id]);
   return getActiveRound(round.id);
 }
 
-export function resumeRound() {
-  const round = getActiveRound();
+export async function resumeRound() {
+  const round = await getActiveRound();
   if (!round || !round.isPaused) return round;
   const newStart = new Date(Date.now() - round.pausedSeconds * 1000).toISOString();
-  db.prepare(`
-    UPDATE rounds
-    SET is_paused = 0, start_time = ?, paused_seconds = 0, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(newStart, round.id);
+  await pool.query(
+    "UPDATE rounds SET is_paused = FALSE, start_time = $1, paused_seconds = 0, updated_at = NOW() WHERE id = $2",
+    [newStart, round.id]
+  );
   return getActiveRound(round.id);
 }
 
-export function resetRound() {
-  const round = getActiveRound();
+export async function resetRound() {
+  const round = await getActiveRound();
   if (!round) return null;
-  db.prepare("DELETE FROM near_win_alerts WHERE round_id = ?").run(round.id);
-  db.prepare(`
-    UPDATE rounds
-    SET drawn_words_json = '[]', last_drawn_word = NULL, start_time = ?, is_paused = 0, paused_seconds = 0, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(new Date().toISOString(), round.id);
+  await pool.query("DELETE FROM near_win_alerts WHERE round_id = $1", [round.id]);
+  await pool.query(
+    "UPDATE rounds SET drawn_words_json = '[]'::jsonb, last_drawn_word = NULL, start_time = $1, is_paused = FALSE, paused_seconds = 0, updated_at = NOW() WHERE id = $2",
+    [new Date().toISOString(), round.id]
+  );
   return getActiveRound(round.id);
 }
 
-export function endRound() {
-  const round = getActiveRound();
+export async function endRound() {
+  const round = await getActiveRound();
   if (!round) return null;
-  db.prepare("UPDATE rounds SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(round.id);
+  await pool.query("UPDATE rounds SET is_active = FALSE, updated_at = NOW() WHERE id = $1", [round.id]);
   return null;
 }
 
-export function getDashboardSnapshot() {
-  const { themes, selectedThemeId } = listThemes();
-  const selectedTheme = getTheme(selectedThemeId);
-  const activeRound = getActiveRound();
-  const blocks = listBlocks(selectedThemeId);
-  return {
-    themes,
-    selectedThemeId,
-    selectedTheme,
-    activeRound,
-    blocks,
-  };
+export async function getDashboardSnapshot() {
+  const { themes, selectedThemeId } = await listThemes();
+  const selectedTheme = await getTheme(selectedThemeId);
+  const activeRound = await getActiveRound();
+  const blocks = await listBlocks(selectedThemeId);
+  return { themes, selectedThemeId, selectedTheme, activeRound, blocks };
 }
 
-export function listUsers() {
-  return db.prepare(`
-    SELECT id, username, name, role, is_active AS isActive, created_at AS createdAt
-    FROM users
-    ORDER BY name, username
-  `).all() as unknown as StoredUser[];
+export async function listUsers() {
+  await ensureInitialized();
+  const { rows } = await pool.query(
+    `SELECT id, username, name, role, is_active AS "isActive", created_at AS "createdAt"
+     FROM users ORDER BY name, username`
+  );
+  return rows as StoredUser[];
 }
 
-export function authenticateUser(username: string, password: string) {
-  const user = db.prepare(`
-    SELECT id, username, name, password_hash AS passwordHash, role, is_active AS isActive, created_at AS createdAt
-    FROM users
-    WHERE lower(username) = lower(?)
-    LIMIT 1
-  `).get(username.trim()) as any;
-
-  if (!user || !user.isActive || !verifyPassword(password, user.passwordHash)) {
-    return null;
-  }
-
+export async function authenticateUser(username: string, password: string) {
+  await ensureInitialized();
+  const row = (await pool.query(
+    `SELECT id, username, name, password_hash AS "passwordHash", role, is_active AS "isActive", created_at AS "createdAt"
+     FROM users WHERE lower(username) = lower($1) LIMIT 1`,
+    [username.trim()]
+  )).rows[0] as any;
+  if (!row || !row.isActive || !verifyPassword(password, row.passwordHash)) return null;
   return {
-    id: user.id,
-    username: user.username,
-    name: user.name,
-    role: user.role,
-    isActive: Boolean(user.isActive),
-    createdAt: user.createdAt,
+    id: Number(row.id),
+    username: row.username,
+    name: row.name,
+    role: row.role,
+    isActive: Boolean(row.isActive),
+    createdAt: row.createdAt,
   } as StoredUser;
 }
 
-export function getUserById(userId: number) {
-  const user = db.prepare(`
-    SELECT id, username, name, role, is_active AS isActive, created_at AS createdAt
-    FROM users
-    WHERE id = ?
-  `).get(userId) as unknown as StoredUser | undefined;
-  return user ? { ...user, isActive: Boolean((user as any).isActive) } : null;
+export async function getUserById(userId: number) {
+  await ensureInitialized();
+  const row = (await pool.query(
+    `SELECT id, username, name, role, is_active AS "isActive", created_at AS "createdAt"
+     FROM users WHERE id = $1`,
+    [userId]
+  )).rows[0] as StoredUser | undefined;
+  return row ? { ...row, isActive: Boolean((row as any).isActive) } : null;
 }
 
-export function createUser(input: { username: string; name: string; password: string; role: "admin" | "operator" }) {
+export async function createUser(input: { username: string; name: string; password: string; role: "admin" | "operator" }) {
   const username = input.username.trim().toLowerCase();
   const name = input.name.trim();
   const password = input.password.trim();
   if (username.length < 3) throw new Error("Usuario precisa ter ao menos 3 caracteres.");
   if (name.length < 3) throw new Error("Nome precisa ter ao menos 3 caracteres.");
   if (password.length < 4) throw new Error("Senha precisa ter ao menos 4 caracteres.");
-  const exists = db.prepare("SELECT 1 FROM users WHERE username = ?").get(username);
-  if (exists) throw new Error("Ja existe um usuario com esse login.");
-
-  const result = db.prepare(`
-    INSERT INTO users (username, name, password_hash, role, is_active)
-    VALUES (?, ?, ?, ?, 1)
-  `).run(username, name, hashPassword(password), input.role);
-
-  return getUserById(Number(result.lastInsertRowid));
+  if ((await pool.query("SELECT 1 FROM users WHERE username = $1", [username])).rowCount) {
+    throw new Error("Ja existe um usuario com esse login.");
+  }
+  const result = await pool.query(
+    `INSERT INTO users (username, name, password_hash, role, is_active)
+     VALUES ($1, $2, $3, $4, TRUE) RETURNING id`,
+    [username, name, hashPassword(password), input.role]
+  );
+  return getUserById(Number(result.rows[0].id));
 }
 
-export function updateUser(userId: number, input: { username?: string; name?: string; password?: string; role?: "admin" | "operator"; isActive?: boolean }) {
-  const current = db.prepare(`
-    SELECT id, username, name, role, is_active AS isActive
-    FROM users
-    WHERE id = ?
-  `).get(userId) as any;
+export async function updateUser(userId: number, input: { username?: string; name?: string; password?: string; role?: "admin" | "operator"; isActive?: boolean }) {
+  const current = (await pool.query("SELECT id, username, name, role, is_active AS \"isActive\" FROM users WHERE id = $1", [userId])).rows[0] as any;
   if (!current) throw new Error("Usuario nao encontrado.");
-
   const username = input.username?.trim().toLowerCase() || current.username;
   const name = input.name?.trim() || current.name;
   const role = input.role || current.role;
   const isActive = typeof input.isActive === "boolean" ? input.isActive : Boolean(current.isActive);
-
-  const duplicate = db.prepare("SELECT 1 FROM users WHERE username = ? AND id <> ?").get(username, userId);
-  if (duplicate) throw new Error("Ja existe um usuario com esse login.");
-
-  db.prepare(`
-    UPDATE users
-    SET username = ?, name = ?, role = ?, is_active = ?
-    WHERE id = ?
-  `).run(username, name, role, isActive ? 1 : 0, userId);
-
+  if ((await pool.query("SELECT 1 FROM users WHERE username = $1 AND id <> $2", [username, userId])).rowCount) {
+    throw new Error("Ja existe um usuario com esse login.");
+  }
+  await pool.query("UPDATE users SET username = $1, name = $2, role = $3, is_active = $4 WHERE id = $5", [username, name, role, isActive, userId]);
   if (input.password?.trim()) {
     if (input.password.trim().length < 4) throw new Error("Senha precisa ter ao menos 4 caracteres.");
-    db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(input.password.trim()), userId);
+    await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [hashPassword(input.password.trim()), userId]);
   }
-
   return getUserById(userId);
 }
 
-export function deleteUser(userId: number) {
-  const totalAdmins = Number(db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").get().count);
-  const current = db.prepare("SELECT id, role FROM users WHERE id = ?").get(userId) as { id: number; role: string } | undefined;
+export async function deleteUser(userId: number) {
+  const current = (await pool.query("SELECT id, role FROM users WHERE id = $1", [userId])).rows[0] as { id: number; role: string } | undefined;
   if (!current) throw new Error("Usuario nao encontrado.");
-  if (current.role === "admin" && totalAdmins <= 1) {
-    throw new Error("Nao e permitido excluir o ultimo administrador.");
+  if (current.role === "admin") {
+    const totalAdmins = Number((await pool.query("SELECT COUNT(*)::int AS count FROM users WHERE role = 'admin'")).rows[0].count);
+    if (totalAdmins <= 1) throw new Error("Nao e permitido excluir o ultimo administrador.");
   }
-  db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+  await pool.query("DELETE FROM users WHERE id = $1", [userId]);
   return listUsers();
 }
