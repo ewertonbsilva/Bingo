@@ -65,6 +65,7 @@ export const PrintManager: React.FC = () => {
         align-items: stretch !important;
         place-items: stretch center !important;
         box-sizing: border-box !important;
+        margin: auto !important;
       }
 
       .bingo-cell-text {
@@ -136,10 +137,8 @@ export const PrintManager: React.FC = () => {
           page-break-inside: avoid !important;
           margin: 0 !important;
           border: none !important;
-          display: flex !important;
-          flex-direction: column !important;
-          justify-content: center !important;
-          align-items: center !important;
+          display: grid !important;
+          place-items: center !important;
           box-sizing: border-box !important;
           background: white !important;
         }
@@ -175,8 +174,8 @@ export const PrintManager: React.FC = () => {
         }
 
         .bingo-card-print-6 {
-          width: 99.5mm !important;
-          height: 95mm !important;
+          width: 97.5mm !important;
+          height: 92.5mm !important;
           padding: 1.5mm !important;
         }
 
@@ -197,9 +196,9 @@ export const PrintManager: React.FC = () => {
         }
 
         .bingo-page-grid-6 {
-          gap: 0.5mm !important;
-          grid-template-columns: repeat(2, 99.5mm) !important;
-          grid-template-rows: repeat(3, 95mm) !important;
+          gap: 0.8mm !important;
+          grid-template-columns: repeat(2, 97.5mm) !important;
+          grid-template-rows: repeat(3, 92.5mm) !important;
         }
       }
     `;
