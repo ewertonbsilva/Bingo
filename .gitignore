@@ -7,3 +7,5 @@ coverage/
 data/*.sqlite
 .env*
 !.env.example
+
+.vercel

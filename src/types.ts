@@ -23,6 +23,15 @@ export interface ThemePreset {
   words?: string[];
 }
 
+export interface AppUser {
+  id: number;
+  username: string;
+  name: string;
+  role: "admin" | "operator";
+  isActive: boolean;
+  createdAt: string;
+}
+
 export interface CardBlockSummary {
   id: number;
   themeId: number;

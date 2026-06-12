@@ -6,15 +6,19 @@ import { Sorteador } from "./components/Sorteador";
 import { PrintManager } from "./components/PrintManager";
 import { WordEditor } from "./components/WordEditor";
 import { PublicScreen } from "./components/PublicScreen";
-import { Heart, LayoutDashboard, Settings2, PlayCircle, Printer, BookOpen, Sun, Moon, PlusCircle, Trash2 } from "lucide-react";
+import { UsersAdmin } from "./components/UsersAdmin";
+import { Heart, LayoutDashboard, Settings2, PlayCircle, Printer, BookOpen, Sun, Moon, PlusCircle, Trash2, Users, LogOut } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
 function MainAppShell() {
-  const { theme, setTheme, currentRound, themes, selectedTheme, setSelectedThemeId, createTheme, deleteTheme, updateSelectedTheme, loading } = useBingo();
+  const { theme, setTheme, currentRound, themes, selectedTheme, setSelectedThemeId, createTheme, deleteTheme, updateSelectedTheme, loading, authLoading, currentUser, logout } = useBingo();
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [showPublicScreen, setShowPublicScreen] = useState<boolean>(false);
   const [newThemeName, setNewThemeName] = useState("");
   const [cardTitleDraft, setCardTitleDraft] = useState("");
+  const [loginData, setLoginData] = useState({ username: "", password: "" });
+  const [loginError, setLoginError] = useState("");
+  const { login } = useBingo();
 
   const themeBackdrops = {
     romantic: "from-burgundy-950 via-[#3a0210] to-black text-rose-100",
@@ -28,10 +32,41 @@ function MainAppShell() {
     { id: "sorteador", label: "Sorteador", icon: PlayCircle },
     { id: "print", label: "Imprimir Cartelas", icon: Printer },
     { id: "palavras", label: "Cadastro de Palavras", icon: BookOpen },
+    ...(currentUser?.role === "admin" ? [{ id: "usuarios", label: "Usuarios", icon: Users }] : []),
   ];
 
-  if (loading) {
+  if (loading || authLoading) {
     return <div className="min-h-screen flex items-center justify-center bg-black text-white">Carregando...</div>;
+  }
+
+  if (!currentUser) {
+    return (
+      <div className={`min-h-screen bg-gradient-to-br ${themeBackdrops[theme]} flex items-center justify-center px-4`}>
+        <div className="w-full max-w-md bg-black/35 border border-white/10 rounded-3xl p-8 space-y-4">
+          <div className="text-center">
+            <h1 className="text-2xl font-black text-white">Bingo Tematico</h1>
+            <p className="text-sm text-rose-200/70 mt-2">Entre com usuario e senha para abrir o sistema.</p>
+          </div>
+          {loginError && <div className="bg-rose-500/15 border border-rose-500/30 text-rose-200 rounded-xl px-4 py-3 text-sm">{loginError}</div>}
+          <input value={loginData.username} onChange={(e) => setLoginData((p) => ({ ...p, username: e.target.value }))} placeholder="Usuario" className="w-full px-4 py-3 rounded-xl bg-black/30 border border-white/10 text-white" />
+          <input value={loginData.password} onChange={(e) => setLoginData((p) => ({ ...p, password: e.target.value }))} placeholder="Senha" type="password" className="w-full px-4 py-3 rounded-xl bg-black/30 border border-white/10 text-white" />
+          <button
+            onClick={async () => {
+              try {
+                setLoginError("");
+                await login(loginData.username, loginData.password);
+              } catch (error: any) {
+                setLoginError(error.message || "Falha no login.");
+              }
+            }}
+            className="w-full bg-yellow-400 text-black font-bold py-3 rounded-xl cursor-pointer"
+          >
+            Entrar
+          </button>
+          <p className="text-xs text-rose-200/55 text-center">Primeiro acesso local: usuario `admin` e senha `admin123`.</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -57,6 +92,9 @@ function MainAppShell() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              <div className={`px-3 py-2 rounded-xl text-xs font-bold border ${theme === "light" ? "bg-white border-amber-950/10 text-amber-950" : "bg-black/40 border-white/10 text-white"}`}>
+                {currentUser.name} • {currentUser.role}
+              </div>
               <select
                 value={selectedTheme?.id ?? ""}
                 onChange={async (e) => {
@@ -95,6 +133,12 @@ function MainAppShell() {
                   <Sun size={10} /> Claro
                 </button>
               </div>
+              <button
+                onClick={() => void logout()}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-2 cursor-pointer ${theme === "light" ? "bg-white border-amber-950/10 text-amber-950" : "bg-black/40 border-white/10 text-white"}`}
+              >
+                <LogOut size={14} /> Sair
+              </button>
             </div>
           </div>
 
@@ -186,6 +230,7 @@ function MainAppShell() {
             {activeTab === "sorteador" && <Sorteador onLaunchPublicScreen={() => setShowPublicScreen(true)} />}
             {activeTab === "print" && <PrintManager />}
             {activeTab === "palavras" && <WordEditor />}
+            {activeTab === "usuarios" && <UsersAdmin />}
           </motion.div>
         </AnimatePresence>
       </main>

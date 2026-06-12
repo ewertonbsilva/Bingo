@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { BingoType, Card, CardBlockSummary, RoundState, ThemePreset, ThemeType, VictoryMode } from "../types";
+import { AppUser, BingoType, Card, CardBlockSummary, RoundState, ThemePreset, ThemeType, VictoryMode } from "../types";
 
 interface BingoContextData {
+  currentUser: AppUser | null;
+  users: AppUser[];
   wordBank: string[];
   currentRound: RoundState | null;
   theme: ThemeType;
@@ -10,6 +12,9 @@ interface BingoContextData {
   blocks: CardBlockSummary[];
   elapsedSeconds: number;
   loading: boolean;
+  authLoading: boolean;
+  login: (username: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
   addWord: (word: string) => Promise<boolean>;
   removeWord: (word: string) => Promise<void>;
   updateWord: (oldWord: string, newWord: string) => Promise<boolean>;
@@ -26,6 +31,10 @@ interface BingoContextData {
   createTheme: (name: string, preset: ThemeType) => Promise<void>;
   deleteTheme: (themeId: number) => Promise<void>;
   updateSelectedTheme: (input: { name?: string; cardTitle?: string }) => Promise<void>;
+  loadUsers: () => Promise<void>;
+  createUser: (input: { username: string; name: string; password: string; role: "admin" | "operator" }) => Promise<void>;
+  updateUserAccount: (userId: number, input: { username?: string; name?: string; password?: string; role?: "admin" | "operator"; isActive?: boolean }) => Promise<void>;
+  deleteUserAccount: (userId: number) => Promise<void>;
   updateBlockRange: (blockId: number, printedStart: number, printedEnd: number) => Promise<void>;
   refreshData: () => Promise<void>;
 }
@@ -47,11 +56,14 @@ async function api<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
 }
 
 export const BingoProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const [users, setUsers] = useState<AppUser[]>([]);
   const [themes, setThemes] = useState<ThemePreset[]>([]);
   const [selectedTheme, setSelectedTheme] = useState<ThemePreset | null>(null);
   const [blocks, setBlocks] = useState<CardBlockSummary[]>([]);
   const [currentRound, setCurrentRound] = useState<RoundState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
   const [themeOverride, setThemeOverride] = useState<ThemeType | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -73,7 +85,25 @@ export const BingoProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   useEffect(() => {
-    refreshData().finally(() => setLoading(false));
+    const bootstrap = async () => {
+      try {
+        const auth = await api<{ authenticated: boolean; user: AppUser | null }>("/api/auth/bootstrap");
+        setCurrentUser(auth.user);
+        if (auth.user) {
+          await refreshData();
+          if (auth.user.role === "admin") {
+            const data = await api<{ users: AppUser[] }>("/api/users");
+            setUsers(data.users);
+          }
+        }
+      } catch {
+        setCurrentUser(null);
+      } finally {
+        setAuthLoading(false);
+        setLoading(false);
+      }
+    };
+    bootstrap();
   }, []);
 
   useEffect(() => {
@@ -97,6 +127,32 @@ export const BingoProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     root.classList.remove("light", "dark", "romantic");
     root.classList.add(theme);
   }, [theme]);
+
+  const login = async (username: string, password: string) => {
+    const data = await api<{ user: AppUser }>("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    setCurrentUser(data.user);
+    await refreshData();
+    if (data.user.role === "admin") {
+      const usersData = await api<{ users: AppUser[] }>("/api/users");
+      setUsers(usersData.users);
+    } else {
+      setUsers([]);
+    }
+  };
+
+  const logout = async () => {
+    await api("/api/auth/logout", { method: "POST" });
+    setCurrentUser(null);
+    setUsers([]);
+    setThemes([]);
+    setSelectedTheme(null);
+    setCurrentRound(null);
+    setBlocks([]);
+  };
 
   const reloadSelectedTheme = async (themeId?: number) => {
     if (!themeId && !selectedTheme) return;
@@ -247,9 +303,41 @@ export const BingoProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await refreshData();
   };
 
+  const loadUsers = async () => {
+    const data = await api<{ users: AppUser[] }>("/api/users");
+    setUsers(data.users);
+  };
+
+  const createUserAction = async (input: { username: string; name: string; password: string; role: "admin" | "operator" }) => {
+    await api("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    await loadUsers();
+  };
+
+  const updateUserAccount = async (userId: number, input: { username?: string; name?: string; password?: string; role?: "admin" | "operator"; isActive?: boolean }) => {
+    await api(`/api/users/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    await loadUsers();
+  };
+
+  const deleteUserAccount = async (userId: number) => {
+    const data = await api<{ users: AppUser[] }>(`/api/users/${userId}`, {
+      method: "DELETE",
+    });
+    setUsers(data.users);
+  };
+
   return (
     <BingoContext.Provider
       value={{
+        currentUser,
+        users,
         wordBank,
         currentRound,
         theme,
@@ -258,6 +346,9 @@ export const BingoProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         blocks,
         elapsedSeconds,
         loading,
+        authLoading,
+        login,
+        logout,
         addWord,
         removeWord,
         updateWord,
@@ -274,6 +365,10 @@ export const BingoProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         createTheme: createThemeAction,
         deleteTheme: deleteThemeAction,
         updateSelectedTheme,
+        loadUsers,
+        createUser: createUserAction,
+        updateUserAccount,
+        deleteUserAccount,
         updateBlockRange,
         refreshData,
       }}

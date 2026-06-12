@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { INITIAL_WORDS } from "./src/data/initialWords";
 
@@ -19,6 +20,15 @@ export interface StoredTheme {
   slug: string;
   preset: "romantic" | "dark" | "light";
   cardTitle?: string;
+}
+
+export interface StoredUser {
+  id: number;
+  username: string;
+  name: string;
+  role: "admin" | "operator";
+  isActive: boolean;
+  createdAt: string;
 }
 
 export interface NearWinAlert {
@@ -52,7 +62,9 @@ export interface ActiveRoundRecord {
   nearWins: NearWinAlert[];
 }
 
-const dataDir = path.join(process.cwd(), "data");
+const dataDir = process.env.VERCEL
+  ? path.join("/tmp", "bingo-data")
+  : path.join(process.cwd(), "data");
 const dbPath = path.join(dataDir, "bingo.sqlite");
 
 if (!fs.existsSync(dataDir)) {
@@ -111,6 +123,16 @@ function createSchema() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(theme_id, value),
       FOREIGN KEY(theme_id) REFERENCES themes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'operator',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS card_blocks (
@@ -187,6 +209,15 @@ function seedDefaults() {
   }
 
   db.prepare("INSERT INTO app_settings (key, value) VALUES ('selected_theme_id', ?)").run(String(romanticId));
+
+  const usersCount = Number(db.prepare("SELECT COUNT(*) AS count FROM users").get().count);
+  if (usersCount === 0) {
+    const passwordHash = hashPassword("admin123");
+    db.prepare(`
+      INSERT INTO users (username, name, password_hash, role, is_active)
+      VALUES (?, ?, ?, 'admin', 1)
+    `).run("admin", "Administrador", passwordHash);
+  }
 }
 
 createSchema();
@@ -196,6 +227,19 @@ try {
   // Column already exists in upgraded databases.
 }
 seedDefaults();
+
+function hashPassword(password: string) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password: string, storedHash: string) {
+  const [salt, hash] = storedHash.split(":");
+  if (!salt || !hash) return false;
+  const derived = crypto.scryptSync(password, salt, 64).toString("hex");
+  return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(derived, "hex"));
+}
 
 function getSelectedThemeId() {
   const row = db.prepare("SELECT value FROM app_settings WHERE key = 'selected_theme_id'").get() as { value: string } | undefined;
@@ -564,4 +608,102 @@ export function getDashboardSnapshot() {
     activeRound,
     blocks,
   };
+}
+
+export function listUsers() {
+  return db.prepare(`
+    SELECT id, username, name, role, is_active AS isActive, created_at AS createdAt
+    FROM users
+    ORDER BY name, username
+  `).all() as unknown as StoredUser[];
+}
+
+export function authenticateUser(username: string, password: string) {
+  const user = db.prepare(`
+    SELECT id, username, name, password_hash AS passwordHash, role, is_active AS isActive, created_at AS createdAt
+    FROM users
+    WHERE lower(username) = lower(?)
+    LIMIT 1
+  `).get(username.trim()) as any;
+
+  if (!user || !user.isActive || !verifyPassword(password, user.passwordHash)) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    username: user.username,
+    name: user.name,
+    role: user.role,
+    isActive: Boolean(user.isActive),
+    createdAt: user.createdAt,
+  } as StoredUser;
+}
+
+export function getUserById(userId: number) {
+  const user = db.prepare(`
+    SELECT id, username, name, role, is_active AS isActive, created_at AS createdAt
+    FROM users
+    WHERE id = ?
+  `).get(userId) as unknown as StoredUser | undefined;
+  return user ? { ...user, isActive: Boolean((user as any).isActive) } : null;
+}
+
+export function createUser(input: { username: string; name: string; password: string; role: "admin" | "operator" }) {
+  const username = input.username.trim().toLowerCase();
+  const name = input.name.trim();
+  const password = input.password.trim();
+  if (username.length < 3) throw new Error("Usuario precisa ter ao menos 3 caracteres.");
+  if (name.length < 3) throw new Error("Nome precisa ter ao menos 3 caracteres.");
+  if (password.length < 4) throw new Error("Senha precisa ter ao menos 4 caracteres.");
+  const exists = db.prepare("SELECT 1 FROM users WHERE username = ?").get(username);
+  if (exists) throw new Error("Ja existe um usuario com esse login.");
+
+  const result = db.prepare(`
+    INSERT INTO users (username, name, password_hash, role, is_active)
+    VALUES (?, ?, ?, ?, 1)
+  `).run(username, name, hashPassword(password), input.role);
+
+  return getUserById(Number(result.lastInsertRowid));
+}
+
+export function updateUser(userId: number, input: { username?: string; name?: string; password?: string; role?: "admin" | "operator"; isActive?: boolean }) {
+  const current = db.prepare(`
+    SELECT id, username, name, role, is_active AS isActive
+    FROM users
+    WHERE id = ?
+  `).get(userId) as any;
+  if (!current) throw new Error("Usuario nao encontrado.");
+
+  const username = input.username?.trim().toLowerCase() || current.username;
+  const name = input.name?.trim() || current.name;
+  const role = input.role || current.role;
+  const isActive = typeof input.isActive === "boolean" ? input.isActive : Boolean(current.isActive);
+
+  const duplicate = db.prepare("SELECT 1 FROM users WHERE username = ? AND id <> ?").get(username, userId);
+  if (duplicate) throw new Error("Ja existe um usuario com esse login.");
+
+  db.prepare(`
+    UPDATE users
+    SET username = ?, name = ?, role = ?, is_active = ?
+    WHERE id = ?
+  `).run(username, name, role, isActive ? 1 : 0, userId);
+
+  if (input.password?.trim()) {
+    if (input.password.trim().length < 4) throw new Error("Senha precisa ter ao menos 4 caracteres.");
+    db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(input.password.trim()), userId);
+  }
+
+  return getUserById(userId);
+}
+
+export function deleteUser(userId: number) {
+  const totalAdmins = Number(db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").get().count);
+  const current = db.prepare("SELECT id, role FROM users WHERE id = ?").get(userId) as { id: number; role: string } | undefined;
+  if (!current) throw new Error("Usuario nao encontrado.");
+  if (current.role === "admin" && totalAdmins <= 1) {
+    throw new Error("Nao e permitido excluir o ultimo administrador.");
+  }
+  db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+  return listUsers();
 }
