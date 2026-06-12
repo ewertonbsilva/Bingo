@@ -5,10 +5,8 @@ import { allowMethod, handleError, json, readJsonBody } from "./_lib/http.js";
 
 function normalizeGeneratedWord(value: string) {
   const sanitized = value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
     .trim()
-    .replace(/[^a-zA-Z\s]/g, " ")
+    .replace(/[^\p{L}\s]/gu, " ")
     .replace(/\s+/g, " ");
 
   return sanitized

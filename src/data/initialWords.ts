@@ -61,7 +61,7 @@ export const INITIAL_WORDS = [
   "LOUVOR",
   "LUZ",
   "MADUREZ",
-  "MANSUDÃO",
+  "MANSIDÃO",
   "MATRIMÔNIO",
   "MISERICÓRDIA",
   "MUDANÇA",
@@ -86,5 +86,5 @@ export const INITIAL_WORDS = [
   "SERVIÇO",
   "TERNURA",
   "UNIÃO",
-  "VITÓRIA"
+  "VITÓRIA",
 ];
