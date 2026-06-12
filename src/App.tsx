@@ -63,7 +63,6 @@ function MainAppShell() {
           >
             Entrar
           </button>
-          <p className="text-xs text-rose-200/55 text-center">Primeiro acesso local: usuario `admin` e senha `admin123`.</p>
         </div>
       </div>
     );
