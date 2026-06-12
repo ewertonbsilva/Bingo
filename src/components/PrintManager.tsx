@@ -54,8 +54,10 @@ export const PrintManager: React.FC = () => {
       }
 
       .bingo-page-grid {
-        width: 100% !important;
-        height: 100% !important;
+        width: fit-content !important;
+        max-width: 100% !important;
+        height: fit-content !important;
+        max-height: 100% !important;
         display: grid !important;
         align-content: center !important;
         justify-content: center !important;
@@ -180,18 +182,24 @@ export const PrintManager: React.FC = () => {
 
         .bingo-page-grid-1 {
           gap: 0 !important;
+          grid-template-columns: 196mm !important;
         }
 
         .bingo-page-grid-2 {
-          gap: 1mm !important;
+          gap: 0.6mm !important;
+          grid-template-columns: repeat(2, 139mm) !important;
         }
 
         .bingo-page-grid-4 {
-          gap: 0.8mm !important;
+          gap: 0.6mm !important;
+          grid-template-columns: repeat(2, 139mm) !important;
+          grid-template-rows: repeat(2, 94mm) !important;
         }
 
         .bingo-page-grid-6 {
-          gap: 0.7mm !important;
+          gap: 0.5mm !important;
+          grid-template-columns: repeat(2, 96mm) !important;
+          grid-template-rows: repeat(3, 89mm) !important;
         }
       }
     `;
