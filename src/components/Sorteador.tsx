@@ -43,6 +43,7 @@ export const Sorteador: React.FC<{ onLaunchPublicScreen: () => void }> = ({ onLa
     setIsRaffling(true);
     setIsRevealingResult(false);
     setShowRaffleAlert("");
+    const drawPromise = drawWord();
 
     let counter = 0;
     const maxCycles = 10;
@@ -55,7 +56,7 @@ export const Sorteador: React.FC<{ onLaunchPublicScreen: () => void }> = ({ onLa
         clearInterval(interval);
         setIsRevealingResult(true);
         setRaffleDisplay("...");
-        const selected = await drawWord();
+        const selected = await drawPromise;
         if (selected) {
           setRaffleDisplay(selected);
         }
